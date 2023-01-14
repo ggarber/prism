@@ -6,11 +6,11 @@ It is based on quinn/h3 rust libraries but with some custom patches for WebTrans
 
 ## TODO
 
-[X] WebTransport connection establishment
-[X] Datagrams send and receive 
-[X] Channels
-[ ] Custom framing
-[ ] Authentication
+- [X] WebTransport connection establishment
+- [X] Datagrams send and receive 
+- [ ] Channels
+- [ ] Custom framing
+- [ ] Authentication
 
 ## Running locally
 
