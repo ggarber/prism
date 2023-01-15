@@ -1,14 +1,16 @@
-use crossbeam_channel::{ Sender, Receiver };
+use async_std::channel::{ unbounded, Sender, Receiver, Recv };
 
 #[derive(Debug)]
 pub struct Channel {
-    channels: (Sender<Vec<u8>>, Receiver<Vec<u8>>),
+    pub name: String,
+    pub channels: (Sender<Vec<u8>>, Receiver<Vec<u8>>),
 }
 
 impl Channel {
     pub fn new(name: &str) -> Self {
-        let (tx, rx) = crossbeam_channel::unbounded();
+        let (tx, rx) = unbounded();
         Self {
+            name: name.to_string(),
             channels: (tx, rx),
         }
     }
@@ -17,7 +19,7 @@ impl Channel {
         self.channels.0.send(msg);
     }
 
-    pub fn recv(&self) -> Vec<u8> {
-        self.channels.1.recv().unwrap()
+    pub fn recv(&self) -> Recv<Vec<u8>> {
+        self.channels.1.recv()
     }
 }

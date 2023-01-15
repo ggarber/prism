@@ -1,6 +1,7 @@
 use std::{
-    sync::{Arc, Mutex}, collections::HashMap,
+    sync::{Arc}, collections::HashMap,
 };
+use tokio::sync::Mutex;
 
 use crate::channel;
 

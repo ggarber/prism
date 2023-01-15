@@ -12,8 +12,9 @@ use bytes::{Bytes};
 use anyhow::{Context, Result};
 use clap::Parser;
 use tracing::*;
-use futures_util::{StreamExt};
+use futures_util::{StreamExt, select};
 use http::{Request, StatusCode};
+use futures_util::FutureExt;
 
 use h3::{quic::BidiStream, server::RequestStream};
 use h3_quinn::quinn;
@@ -113,9 +114,9 @@ async fn main() -> Result<()> {
                             info!("new stream and request: {:#?}", req);
 
                             match handle_request(req, &mut stream).await {
-                                Ok(channel) => {
+                                Ok(channel_name) => {
                                     // let transport = WebTransport::new();
-                                    let channel = server.lock().unwrap().find_or_create_channel(&channel);
+                                    let channel = server.lock().unwrap().find_or_create_channel(&channel_name);
                                     (channel, stream)
                                 },
                                 Err(err) => {
@@ -129,23 +130,41 @@ async fn main() -> Result<()> {
                     };
 
                     info!("request accepted: {:#?}", channel);
-
-
-                    // let ch = channel.lock().unwrap();
+                    
+                    let guard = channel.lock().await;
+                    let (send, recv) = &guard.channels;
 
                     loop {
-                        match h3_conn.poll_datagrams().await {
-                            Ok(Some(datagram)) => {
-                                // echo
-                                let _ = h3_conn.send_datagram(datagram).await;
+                        select! {
+                            data = h3_conn.poll_datagrams().fuse() => {
+                                match data {
+                                    Ok(Some(datagram)) => {
+                                        debug!("received: {:#?}", datagram.len());
+                                        // Avoid awaiting here if possible
+                                        let _ = send.send(datagram.into()).await;
+                                    },
+                                    Ok(None) => {
+                                        warn!("no more datagrams");
+                                        break;
+                                    },
+                                    Err(err) => {
+                                        error!("error on poll_datagrams {}", err);
+                                        break;
+                                    }
+                                }
                             },
-                            Ok(None) => {
-                                warn!("no more datagrams");
-                                break;
-                            },
-                            Err(err) => {
-                                error!("error on poll_datagrams {}", err);
-                                break;
+                            res = recv.recv().fuse() => {
+                                match res {
+                                    Ok(datagram) => {
+                                        debug!("sent: {:#?}", datagram.len());
+
+                                        let _ = h3_conn.send_datagram(datagram.into()).await;
+                                    },
+                                    Err(err) => {
+                                        error!("no more datagrams {}", err);
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
