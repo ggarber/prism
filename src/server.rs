@@ -1,6 +1,4 @@
-use std::{
-    sync::{Arc}, collections::HashMap,
-};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::channel;
@@ -22,9 +20,9 @@ impl Server {
         match channel {
             Some(channel) => channel.clone(),
             None => {
-                let channel = Arc::new(Mutex::new(channel::Channel::new(name))) ;
+                let channel = Arc::new(Mutex::new(channel::Channel::new(name)));
                 self.channels.insert(name.to_string(), channel.clone());
-                channel.clone()
+                channel
             }
         }
     }

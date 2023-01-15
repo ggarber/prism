@@ -1,20 +1,20 @@
 use std::{
     fs,
     net::SocketAddr,
-    path::{PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 mod channel;
 mod server;
 
-use bytes::{Bytes};
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use clap::Parser;
-use tracing::*;
-use futures_util::{StreamExt, select};
-use http::{Request, StatusCode};
 use futures_util::FutureExt;
+use futures_util::{select, StreamExt};
+use http::{Request, StatusCode};
+use tracing::*;
 
 use h3::{quic::BidiStream, server::RequestStream};
 use h3_quinn::quinn;
@@ -116,9 +116,12 @@ async fn main() -> Result<()> {
                             match handle_request(req, &mut stream).await {
                                 Ok(channel_name) => {
                                     // let transport = WebTransport::new();
-                                    let channel = server.lock().unwrap().find_or_create_channel(&channel_name);
+                                    let channel = server
+                                        .lock()
+                                        .unwrap()
+                                        .find_or_create_channel(&channel_name);
                                     (channel, stream)
-                                },
+                                }
                                 Err(err) => {
                                     error!("handling request failed: {}", err);
                                     anyhow::bail!("invalid request")
@@ -126,11 +129,11 @@ async fn main() -> Result<()> {
                             }
                         }
                         Ok(None) => anyhow::bail!("no request stream"),
-                        Err(err) => anyhow::bail!("invalid request {}", err)
+                        Err(err) => anyhow::bail!("invalid request {}", err),
                     };
 
                     info!("request accepted: {:#?}", channel);
-                    
+
                     let guard = channel.lock().await;
                     let (send, recv) = &guard.channels;
 
@@ -192,23 +195,25 @@ where
         return Err("invalid method".into());
     }
 
-    let tokens: Vec<&str> = req.uri().path().split('/').filter(|s| !s.is_empty()).collect();
+    let tokens: Vec<&str> = req
+        .uri()
+        .path()
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
     if (tokens.len() != 2) || (tokens[0] != "channels") {
         return Err("invalid query".into());
     }
     let channel = tokens[1].to_owned();
 
-    let resp = http::Response::builder().status(StatusCode::OK)
+    let resp = http::Response::builder()
+        .status(StatusCode::OK)
         .header("sec-webtransport-http3-draft", "draft02")
         .body(())
         .unwrap();
 
     match stream.send_response(resp).await {
-        Ok(_) => {
-            Ok(channel)
-        }
-        Err(err) => {
-            Err(err.into())
-        }
+        Ok(_) => Ok(channel),
+        Err(err) => Err(err.into()),
     }
 }

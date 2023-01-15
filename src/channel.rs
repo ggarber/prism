@@ -1,4 +1,4 @@
-use async_std::channel::{ unbounded, Sender, Receiver, Recv };
+use async_std::channel::{unbounded, Receiver, Sender};
 
 #[derive(Debug)]
 pub struct Channel {
@@ -13,13 +13,5 @@ impl Channel {
             name: name.to_string(),
             channels: (tx, rx),
         }
-    }
-
-    pub fn send(&self, msg: Vec<u8>) {
-        self.channels.0.send(msg);
-    }
-
-    pub fn recv(&self) -> Recv<Vec<u8>> {
-        self.channels.1.recv()
     }
 }
