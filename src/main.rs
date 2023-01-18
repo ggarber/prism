@@ -100,6 +100,10 @@ async fn main() -> Result<()> {
 
     let server = Arc::new(Mutex::new(server::Server::new()));
 
+    tokio::spawn(async move {
+        let _ = rocket::build().mount("/", rocket::fs::FileServer::from("demo")).launch().await;
+    });
+
     while let Some(new_conn) = incoming.next().await {
         info!("incoming connection");
 
