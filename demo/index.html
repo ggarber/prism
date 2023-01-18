@@ -16,6 +16,7 @@
     </style>
   </head>
   <body>
+    <h1>WebTransport datagrams demo</h1>
     Channel <input id="channel" type="text" value="default"></input>
     <button onclick="connect()">Connect</button>
 
@@ -36,11 +37,15 @@
         const channel = url.searchParams.get('channel');
         document.getElementById('channel').value = channel || 'default';
 
-        function addOutput(text) {
+        function log(text) {
           const output = document.getElementById('output');
           const p = document.createElement('p');
           p.innerText = text;
           output.appendChild(p);
+        }
+
+        if (!window.WebTransport) {
+          log('WebTransport is not supported in this browser!!!');
         }
 
         async function read(transport, callback) {
@@ -53,24 +58,24 @@
             callback(value);
           }
         }
+
         async function connect() {
           if (transport) {
             transport.close();
           }
-          addOutput('CONNECTION: Connecting');
+          log('CONNECTION: Connecting');
 
           const channel = document.getElementById('channel').value || 'default';
           transport = new WebTransport(`https://localhost:4433/channels/${channel}`);
           transport.closed.then(() => {
-            addOutput(`CONNECTION: Connection closed gracefully.`);
+            log(`CONNECTION: Connection closed gracefully.`);
           }).catch((error) => {
-            addOutput(`CONNECTION: Connection closed due to ${error}.`);
+            log(`CONNECTION: Connection closed due to ${error}.`);
           });
 
-          // The connection can be used once ready fulfills
           await transport.ready;
 
-          addOutput('CONNECTION: Ready');
+          log('CONNECTION: Ready');
 
           writer = transport.datagrams.writable.getWriter();
 
@@ -80,17 +85,22 @@
           // }, 1000);
 
           read(transport, (data) => {
-            addOutput('RECEIVED: ' + decoder.decode(data));
-          });
+            log('RECEIVED: ' + decoder.decode(data));
+          }).catch((error) => {
+            log(`CONNECTION: Receiver failed due to ${error}.`);
+          })
         }
 
         async function send() {
           if (writer) {
             const message = document.getElementById('message').value;
             const data = new Uint8Array(encoder.encode(message));
-            await writer.write(data);
-
-            addOutput('SENT: ' + message);
+            try {
+              await writer.write(data);
+              log('SENT: ' + message);
+            } catch (error) {
+              log(`CONNECTION: Sender failed due to ${error}.`);
+            }
           }
         }
     </script>
