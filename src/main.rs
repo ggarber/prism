@@ -1,8 +1,10 @@
 use std::{
+    convert::TryInto,
     fs,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 mod channel;
@@ -89,7 +91,9 @@ async fn main() -> Result<()> {
     tls_config.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
     tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
 
-    let config = quinn::ServerConfig::with_crypto(Arc::new(tls_config));
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(tls_config));
+    let transport_config = Arc::get_mut(&mut config.transport).unwrap();
+    transport_config.max_idle_timeout(Some(Duration::from_secs(600).try_into().unwrap()));
 
     let (endpoint, mut incoming) = quinn::Endpoint::server(config, options.listen)?;
     info!("listening on {}", endpoint.local_addr()?);
@@ -97,13 +101,13 @@ async fn main() -> Result<()> {
     let server = Arc::new(Mutex::new(server::Server::new()));
 
     while let Some(new_conn) = incoming.next().await {
-        info!("new incoming connection");
+        info!("incoming connection");
 
         let server = server.clone();
         tokio::spawn(async move {
             match new_conn.await {
                 Ok(conn) => {
-                    info!("new connection established");
+                    info!("connection established");
 
                     let mut h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(conn))
                         .await
@@ -111,7 +115,7 @@ async fn main() -> Result<()> {
 
                     let (channel, _stream) = match h3_conn.accept().await {
                         Ok(Some((req, mut stream))) => {
-                            info!("new stream and request: {:#?}", req);
+                            info!("connection new stream and request: {:#?}", req);
 
                             match handle_request(req, &mut stream).await {
                                 Ok(channel_name) => {
@@ -132,10 +136,13 @@ async fn main() -> Result<()> {
                         Err(err) => anyhow::bail!("invalid request {}", err),
                     };
 
-                    info!("request accepted: {:#?}", channel);
-
                     let guard = channel.lock().await;
-                    let (send, recv) = &guard.channels;
+                    let tx = guard.broadcast.clone();
+                    let mut rx = tx.subscribe();
+                    let channel_name = guard.name.clone();
+
+                    info!("connection request accepted: {:#?}", channel_name);
+                    drop(guard);
 
                     loop {
                         select! {
@@ -143,8 +150,8 @@ async fn main() -> Result<()> {
                                 match data {
                                     Ok(Some(datagram)) => {
                                         debug!("received: {:#?}", datagram.len());
-                                        // Avoid awaiting here if possible
-                                        let _ = send.send(datagram.into()).await;
+
+                                        let _ = tx.send(datagram.into());
                                     },
                                     Ok(None) => {
                                         warn!("no more datagrams");
@@ -156,7 +163,7 @@ async fn main() -> Result<()> {
                                     }
                                 }
                             },
-                            res = recv.recv().fuse() => {
+                            res = rx.recv().fuse() => {
                                 match res {
                                     Ok(datagram) => {
                                         debug!("sent: {:#?}", datagram.len());
@@ -171,11 +178,15 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
+
+                    // server.lock().unwrap().destroy_channel(&channel_name);
                 }
                 Err(err) => {
                     error!("accepting connection failed: {:?}", err);
                 }
             }
+
+            info!("connection finished");
             Ok(())
         });
     }
@@ -192,15 +203,12 @@ where
 {
     // Only accept webtransport requests
     if req.method() != "CONNECT" {
+        // TODO: Check webtransport protocol
         return Err("invalid method".into());
     }
 
-    let tokens: Vec<&str> = req
-        .uri()
-        .path()
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let path = req.uri().path();
+    let tokens: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if (tokens.len() != 2) || (tokens[0] != "channels") {
         return Err("invalid query".into());
     }

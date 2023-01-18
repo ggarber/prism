@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
+use tracing::*;
 
 use crate::channel;
 
@@ -20,10 +21,15 @@ impl Server {
         match channel {
             Some(channel) => channel.clone(),
             None => {
+                info!("channel created {}", name);
                 let channel = Arc::new(Mutex::new(channel::Channel::new(name)));
                 self.channels.insert(name.to_string(), channel.clone());
                 channel
             }
         }
     }
+
+    // pub fn destroy_channel(&mut self, name: &str) -> void {
+    //     let channel = self.channels.delete(name);
+    // }
 }
