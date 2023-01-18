@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="x-ua-compatible" content="ie=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title></title>
+    <style>
+      p {
+        margin: 0px;
+      }
+      div {
+        margin: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    Channel <input id="channel" type="text" value="default"></input>
+    <button onclick="connect()">Connect</button>
+
+    Message <input id="message" type="text" value="Hello"></input>
+    <button onclick="send()">Send</button>
+
+    <div id="output">
+
+    </div>
+  
+    <script>
+        const encoder = new TextEncoder();
+        const decoder = new TextDecoder();
+        let transport = null;
+        let writer = null;
+
+        const url = new URL(window.location.href);
+        const channel = url.searchParams.get('channel');
+        document.getElementById('channel').value = channel || 'default';
+
+        function addOutput(text) {
+          const output = document.getElementById('output');
+          const p = document.createElement('p');
+          p.innerText = text;
+          output.appendChild(p);
+        }
+
+        async function read(transport, callback) {
+          const reader = transport.datagrams.readable.getReader();
+          while (true) {
+            const {value, done} = await reader.read();
+            if (done) {
+              break;
+            }
+            callback(value);
+          }
+        }
+        async function connect() {
+          if (transport) {
+            transport.close();
+          }
+          addOutput('CONNECTION: Connecting');
+
+          const channel = document.getElementById('channel').value || 'default';
+          transport = new WebTransport(`https://localhost:4433/channels/${channel}`);
+          transport.closed.then(() => {
+            addOutput(`CONNECTION: Connection closed gracefully.`);
+          }).catch((error) => {
+            addOutput(`CONNECTION: Connection closed due to ${error}.`);
+          });
+
+          // The connection can be used once ready fulfills
+          await transport.ready;
+
+          addOutput('CONNECTION: Ready');
+
+          writer = transport.datagrams.writable.getWriter();
+
+          // setInterval(() => {
+          //   const data = new Uint8Array(encoder.encode('Hello World!'));
+          //   writer.write(data);
+          // }, 1000);
+
+          read(transport, (data) => {
+            addOutput('RECEIVED: ' + decoder.decode(data));
+          });
+        }
+
+        async function send() {
+          if (writer) {
+            const message = document.getElementById('message').value;
+            const data = new Uint8Array(encoder.encode(message));
+            await writer.write(data);
+
+            addOutput('SENT: ' + message);
+          }
+        }
+    </script>
+  </body>
+</html>
