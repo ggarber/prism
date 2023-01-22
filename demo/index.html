@@ -10,99 +10,202 @@
       p {
         margin: 0px;
       }
-      div {
+      #output {
         margin: 20px;
+      }
+      div.graph-container {
+        float: left;
+        margin: 0.5em;
+        width: calc(50% - 1em);
       }
     </style>
   </head>
   <body>
     <h1>WebTransport datagrams demo</h1>
-    Channel <input id="channel" type="text" value="default"></input>
-    <button onclick="connect()">Connect</button>
+    <div>
+      Host <input id="host" type="text" value="prismrouter.com"></input>
+      Channel <input id="channel" type="text" value="default"></input>
+      <button onclick="connect()">Connect</button>
+    </div>
 
-    Message <input id="message" type="text" value="Hello"></input>
-    <button onclick="send()">Send</button>
+    <div>
+      Message <input id="message" type="text" value="Hello"></input>
+      <button onclick="sendMessage()">Send</button>
 
+      <button onclick="burst()">Burst</button>
+    </div>
+
+    <div class="graph-container" id="rtt-graph">
+      <div>RTT</div>
+      <canvas id="rttCanvas"></canvas>
+    </div>
+    <div class="graph-container" id="packets-graph">
+      <div>Packets</div>
+      <canvas id="packetsCanvas"></canvas>
+    </div>
+    
     <div id="output">
-
     </div>
   
+    <script src="./graph.js"></script>
     <script>
-        const encoder = new TextEncoder();
-        const decoder = new TextDecoder();
-        let transport = null;
-        let writer = null;
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      let transport = null;
+      let writer = null;
+      const trackID = Math.floor(Math.random() * 1000000);
+      let seqNumber = 0;
+      let lastSeqNumber = 0;
+      const stats = {
+        sent: 0,
+        recv: 0,
+        lost: 0,
+        rtt: 0,
+      }
 
-        const url = new URL(window.location.href);
-        const channel = url.searchParams.get('channel');
-        document.getElementById('channel').value = channel || 'default';
+      const url = new URL(window.location.href);
+      const channel = url.searchParams.get('channel');
+      document.getElementById('channel').value = channel || 'default';
+      const host = url.searchParams.get('host');
+      document.getElementById('host').value = host || 'prismrouter.com';
 
-        function log(text) {
-          const output = document.getElementById('output');
-          const p = document.createElement('p');
-          p.innerText = text;
-          output.appendChild(p);
-        }
+      function log(text) {
+        const output = document.getElementById('output');
+        const p = document.createElement('p');
+        p.innerText = text;
+        output.appendChild(p);
+      }
 
-        if (!window.WebTransport) {
-          log('WebTransport is not supported in this browser!!!');
-        }
+      if (!window.WebTransport) {
+        log('WebTransport is not supported in this browser!!!');
+      }
 
-        async function read(transport, callback) {
-          const reader = transport.datagrams.readable.getReader();
-          while (true) {
-            const {value, done} = await reader.read();
-            if (done) {
-              break;
-            }
-            callback(value);
+      async function read(transport, callback) {
+        const reader = transport.datagrams.readable.getReader();
+        while (true) {
+          const {value, done} = await reader.read();
+          if (done) {
+            break;
           }
+          callback(value);
         }
+      }
 
-        async function connect() {
-          if (transport) {
+      async function connect() {
+        if (transport) {
+          try {
             transport.close();
-          }
-          log('CONNECTION: Connecting');
-
-          const channel = document.getElementById('channel').value || 'default';
-          transport = new WebTransport(`https://localhost:4433/channels/${channel}`);
-          transport.closed.then(() => {
-            log(`CONNECTION: Connection closed gracefully.`);
-          }).catch((error) => {
-            log(`CONNECTION: Connection closed due to ${error}.`);
-          });
-
-          await transport.ready;
-
-          log('CONNECTION: Ready');
-
-          writer = transport.datagrams.writable.getWriter();
-
-          // setInterval(() => {
-          //   const data = new Uint8Array(encoder.encode('Hello World!'));
-          //   writer.write(data);
-          // }, 1000);
-
-          read(transport, (data) => {
-            log('RECEIVED: ' + decoder.decode(data));
-          }).catch((error) => {
-            log(`CONNECTION: Receiver failed due to ${error}.`);
-          })
-        }
-
-        async function send() {
-          if (writer) {
-            const message = document.getElementById('message').value;
-            const data = new Uint8Array(encoder.encode(message));
-            try {
-              await writer.write(data);
-              log('SENT: ' + message);
-            } catch (error) {
-              log(`CONNECTION: Sender failed due to ${error}.`);
-            }
+          } catch {
           }
         }
+        log('CONNECTION: Connecting');
+
+        const channel = document.getElementById('channel').value || 'default';
+        const host = document.getElementById('host').value || 'localhost';
+        transport = new WebTransport(`https://${host}:4433/channels/${channel}`);
+        transport.closed.then(() => {
+          log(`CONNECTION: Connection closed gracefully.`);
+        }).catch((error) => {
+          log(`CONNECTION: Connection closed due to ${error}.`);
+        });
+
+        await transport.ready;
+
+        log('CONNECTION: Ready');
+
+        writer = transport.datagrams.writable.getWriter();
+
+        read(transport, (data) => {
+          const view = new DataView(data.buffer);
+          stats.recv += 1;
+          if (data.length < 20 || view.getUint8(8) !== 0x0D) {
+            log('RECEIVED: msg=' + decoder.decode(data));
+          } else {
+            // log(`RECEIVED: len=${data.length} sn=${view.getUint32(1)}`);
+            stats.lost += view.getUint32(4, false) - lastSeqNumber - 1;
+            lastSeqNumber = view.getUint32(4, false);
+            const now = Date.now();
+            const rtt = now % 10000000 - view.getUint32(12, false);
+            stats.rtt = stats.rtt * 0.9 + rtt * 0.1;
+          }
+        }).catch((error) => {
+          log(`CONNECTION: Receiver failed due to ${error}.`);
+        })
+      }
+
+      function sendMessage() {
+        const message = document.getElementById('message').value;
+        const data = new Uint8Array(encoder.encode(message));
+        send(data, message);
+      }
+
+      async function send(data, message) {
+        if (!writer) {
+          return;
+        }
+        try {
+          stats.sent += 1;
+          await writer.write(data);
+          const view = new DataView(data.buffer);
+          if (data.length < 20 || view.getUint8(8) !== 0x0D) {
+            log('SENT: msg=' + message);
+          }
+        } catch (error) {
+          log(`CONNECTION: Sender failed due to ${error}.`);
+        }
+      }
+
+      function hex(array) {
+        let hex = '';
+        for (let byte of array) {
+            hex += byte.toString(16);
+        }
+        return hex;
+      }
+
+      async function burst() {
+        log('SEND: 100 msgs/sec with 500 bytes each for 10 secs');
+        const start = Date.now();
+        let sent = 0;
+        const interval = setInterval(() => {
+          const now = Date.now();
+          if (++sent > 1000) {
+            return clearInterval(interval);
+          }
+          // Use RUSH-like packet format
+          const data = new Uint8Array(20);
+          const view = new DataView(data.buffer);
+          view.setUint32(0, data.length, false);
+          view.setUint32(4, seqNumber++, false);
+          view.setUint8(8, 0x0D, false);  // Type: Video
+          view.setUint8(9, 0x04, false);  // Codec: VP9
+          view.setUint32(12, now % 10000000, false);
+          view.setUint32(16, trackID, false);
+          
+          send(data);
+        }, 10);
+      }
+      
+      const packetsSentSeries = new TimelineDataSeries();
+      const packetsRecvSeries = new TimelineDataSeries();
+      const packetsView = new TimelineGraphView('packetsGraph', 'packetsCanvas');
+      packetsView.updateEndDate();
+
+      setInterval(() => {
+        const now = Date.now();
+        packetsSentSeries.addPoint(now, stats.sent);
+        packetsRecvSeries.addPoint(now, stats.recv);
+        packetsView.setDataSeries([ packetsSentSeries, packetsRecvSeries ]);
+        packetsView.updateEndDate();
+
+        rttSeries.addPoint(now, stats.rtt);
+        rttView.setDataSeries([ rttSeries ]);
+        rttView.updateEndDate();
+      }, 1000);
+
+      const rttSeries = new TimelineDataSeries();
+      const rttView = new TimelineGraphView('rttGraph', 'rttCanvas');
+      rttView.updateEndDate();
     </script>
   </body>
 </html>
