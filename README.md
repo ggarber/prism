@@ -2,15 +2,9 @@
 
 Proof of concept of a WebTransports router providing real-time forwarding of arbitrary data between multiple endpoints (typically Chrome browsers).
 
-It is based on quinn/h3 rust libraries but with some custom patches for WebTransport support.
+The implementation makes use on quinn/h3 rust libraries but with some custom patches for WebTransport support.
 
-## TODO
-
-- [X] WebTransport connection establishment
-- [X] Datagrams send and receive 
-- [ ] Channels
-- [ ] Custom framing
-- [ ] Authentication
+Check deployed demo to http://prismrouter.com
 
 ## Running locally
 
