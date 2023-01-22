@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'prism'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=prism",
+                    "--package=prism"
+                ],
+                "filter": {
+                    "name": "prism",
+                    "kind": "bin"
+                }
+            },
+            "args": ["--key", "ssl.key", "--cert", "ssl.crt"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'prism'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=prism",
+                    "--package=prism"
+                ],
+                "filter": {
+                    "name": "prism",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
