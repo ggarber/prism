@@ -10,18 +10,22 @@
       p {
         margin: 0px;
       }
-      #output {
-        margin: 20px;
+      div {
+        margin: 0.5em;
       }
       div.graph-container {
         float: left;
-        margin: 0.5em;
-        width: calc(50% - 1em);
+        width: 400px;
       }
     </style>
   </head>
   <body>
     <h1>WebTransport datagrams demo</h1>
+    <pre>
+      Demo using WebTransport datagrams to send and receive messages.
+      Click "Connect" and then "Send" to send a text message or "Burst" to send many and measure the latency.
+    </pre>
+
     <div>
       Host <input id="host" type="text" value="prismrouter.com"></input>
       Channel <input id="channel" type="text" value="default"></input>
@@ -35,13 +39,15 @@
       <button onclick="burst()">Burst</button>
     </div>
 
-    <div class="graph-container" id="rtt-graph">
-      <div>RTT</div>
-      <canvas id="rttCanvas"></canvas>
-    </div>
-    <div class="graph-container" id="packets-graph">
-      <div>Packets</div>
-      <canvas id="packetsCanvas"></canvas>
+    <div>
+      <div class="graph-container" id="rtt-graph">
+        <div>RTT</div>
+        <canvas id="rttCanvas"></canvas>
+      </div>
+      <div class="graph-container" id="packets-graph">
+        <div>Packets</div>
+        <canvas id="packetsCanvas"></canvas>
+      </div>
     </div>
     
     <div id="output">
