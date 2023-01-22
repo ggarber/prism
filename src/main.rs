@@ -1,5 +1,4 @@
 use std::{
-    convert::TryInto,
     fs,
     net::SocketAddr,
     path::PathBuf,
@@ -99,10 +98,6 @@ async fn main() -> Result<()> {
     info!("listening on {}", endpoint.local_addr()?);
 
     let server = Arc::new(Mutex::new(server::Server::new()));
-
-    tokio::spawn(async move {
-        let _ = rocket::build().mount("/", rocket::fs::FileServer::from("demo")).launch().await;
-    });
 
     while let Some(new_conn) = incoming.next().await {
         info!("incoming connection");
