@@ -16,7 +16,9 @@ use h3_quinn::quinn;
 pub mod channel;
 pub mod server;
 pub mod transport;
-use transport::Transport;
+pub mod websocket;
+pub mod webtransport;
+use crate::transport::Transport;
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"h3", b"rush"];
 
@@ -102,8 +104,8 @@ async fn main() -> Result<()> {
 
         let server = server.clone();
         tokio::spawn(async move {
-            let transport = transport::WebTransport::new(server);
-            let _ = transport.process(new_conn).await;
+            let transport = webtransport::WebTransport::new(server, new_conn);
+            let _ = transport.process().await;
         });
     }
 
