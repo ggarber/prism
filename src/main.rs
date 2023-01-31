@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Context, Result};
 use clap::Parser;
 use futures_util::StreamExt;
+use tokio::net::TcpListener;
 use tracing::*;
 
 use h3_quinn::quinn;
@@ -99,12 +100,28 @@ async fn main() -> Result<()> {
 
     let server = Arc::new(Mutex::new(server::Server::new()));
 
-    while let Some(new_conn) = incoming.next().await {
-        info!("incoming connection");
+    let clone = server.clone();
+    tokio::spawn(async move {
+        while let Some(new_conn) = incoming.next().await {
+            info!("incoming connection quic");
+
+            let server = clone.clone();
+            tokio::spawn(async move {
+                let transport = webtransport::WebTransport::new(server, new_conn);
+                let _ = transport.process().await;
+            });
+        }
+    });
+
+    let try_socket = TcpListener::bind("127.0.0.1:8080").await;
+    let listener = try_socket.expect("Failed to bind");
+
+    while let Ok((stream, _)) = listener.accept().await {
+        info!("incoming connection tcp");
 
         let server = server.clone();
         tokio::spawn(async move {
-            let transport = webtransport::WebTransport::new(server, new_conn);
+            let transport = websocket::WebSocket::new(server, stream);
             let _ = transport.process().await;
         });
     }
