@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta http-equiv="x-ua-compatible" content="ie=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:,">
 
     <title></title>
     <style>
@@ -24,19 +25,24 @@
     <pre>
       Demo using WebTransport datagrams to send and receive messages.
       Click "Connect" and then "Send" to send a text message or "Burst" to send many and measure the latency.
+      Also you can use "Start Audio Sending" in one browser and "Start Audio Receiving" in another to transmit encoded unidirectional audio in real time.
     </pre>
 
     <div>
       Host <input id="host" type="text" value="prismrouter.com"></input>
       Channel <input id="channel" type="text" value="default"></input>
-      <button onclick="connect()">Connect</button>
+      <button id="connect-button">Connect</button>
     </div>
 
     <div>
       Message <input id="message" type="text" value="Hello"></input>
-      <button onclick="sendMessage()">Send</button>
+      <button id="send-button">Send</button>
 
-      <button onclick="burst()">Burst</button>
+      <button id="burst-button">Burst</button>
+
+      <button id="audio-sending-button">Start Audio Sending</button>
+      <button id="audio-receiving-button">Start Audio Receiving</button>
+      <audio id="audio-receiving"></audio>
     </div>
 
     <div>
@@ -52,13 +58,25 @@
     
     <div id="output">
     </div>
+
+    <footer style="position: absolute; bottom: 10px;">
+      This demo makes use of the <a href="https://github.com/neuvideo/lyra-js">lyra-js</a> library and the help of ChatGPT.
+    </footer>
   
+    <script src="./util.js"></script>
     <script src="./graph.js"></script>
-    <script>
+    <script src="./webtransport.js"></script>
+    <script src="./websocket.js"></script>
+    <script src="./media.js"></script>
+    <script type="module">
+      import { isLyraReady, encodeWithLyra, decodeWithLyra } from "https://unpkg.com/lyra-codec/dist/lyra_bundle.js";
+
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
-      let transport = null;
+      let connection = null;
+      let stream = null;
       let writer = null;
+
       const trackID = Math.floor(Math.random() * 1000000);
       let seqNumber = 0;
       let lastSeqNumber = 0;
@@ -75,85 +93,14 @@
       const host = url.searchParams.get('host');
       document.getElementById('host').value = host || 'prismrouter.com';
 
-      function log(text) {
-        const output = document.getElementById('output');
-        const p = document.createElement('p');
-        p.innerText = text;
-        output.appendChild(p);
-      }
-
-      if (!window.WebTransport) {
-        log('WebTransport is not supported in this browser!!!');
-      }
-
-      async function read(transport, callback) {
-        const reader = transport.datagrams.readable.getReader();
-        while (true) {
-          const {value, done} = await reader.read();
-          if (done) {
-            break;
-          }
-          callback(value);
-        }
-      }
-
-      async function connect() {
-        if (transport) {
-          try {
-            transport.close();
-          } catch {
-          }
-        }
-        log('CONNECTION: Connecting');
-
-        const channel = document.getElementById('channel').value || 'default';
-        const host = document.getElementById('host').value || 'localhost';
-        transport = new WebTransport(`https://${host}:4433/channels/${channel}`);
-        transport.closed.then(() => {
-          log(`CONNECTION: Connection closed gracefully.`);
-        }).catch((error) => {
-          log(`CONNECTION: Connection closed due to ${error}.`);
-        });
-
-        await transport.ready;
-
-        log('CONNECTION: Ready');
-
-        writer = transport.datagrams.writable.getWriter();
-
-        read(transport, (data) => {
-          const view = new DataView(data.buffer);
-          stats.recv += 1;
-          if (data.length < 20 || view.getUint8(8) !== 0x0D) {
-            log('RECEIVED: msg=' + decoder.decode(data));
-          } else {
-            // log(`RECEIVED: len=${data.length} sn=${view.getUint32(1)}`);
-            stats.lost += view.getUint32(4, false) - lastSeqNumber - 1;
-            lastSeqNumber = view.getUint32(4, false);
-            const now = Date.now();
-            const rtt = now % 10000000 - view.getUint32(12, false);
-            stats.rtt = stats.rtt * 0.9 + rtt * 0.1;
-          }
-        }).catch((error) => {
-          log(`CONNECTION: Receiver failed due to ${error}.`);
-        })
-      }
-
-      function sendMessage() {
-        const message = document.getElementById('message').value;
-        const data = new Uint8Array(encoder.encode(message));
-        send(data, message);
-      }
-
       async function send(data, message) {
-        if (!writer) {
-          return;
-        }
         try {
+          await connection.send(data);
           stats.sent += 1;
-          await writer.write(data);
           const view = new DataView(data.buffer);
-          if (data.length < 20 || view.getUint8(8) !== 0x0D) {
+          const isAudioMessage = data.length > 20 && view.getUint8(8) == 0x0C;
+          const isBurstMessage = data.length > 20 && view.getUint8(8) == 0x0D;
+          if (!isAudioMessage && !isBurstMessage) {
             log('SENT: msg=' + message);
           }
         } catch (error) {
@@ -161,15 +108,82 @@
         }
       }
 
-      function hex(array) {
-        let hex = '';
-        for (let byte of array) {
-            hex += byte.toString(16);
-        }
-        return hex;
+      function updateUI() {
+        const connected = connection && connection.connected;
+        document.getElementById('send-button').disabled = !connected;
+        document.getElementById('burst-button').disabled = !connected;
+        document.getElementById('audio-sending-button').disabled = !connected;
+        document.getElementById('audio-receiving-button').disabled = !connected;
       }
+      updateUI();
 
-      async function burst() {
+      document.getElementById('connect-button').addEventListener('click', async () => {
+        if (connection) {
+          connection.close();
+          connection = null;
+        }
+        log('CONNECTION: Connecting');
+
+        const channel = document.getElementById('channel').value || 'default';
+        const host = document.getElementById('host').value || 'localhost';
+        const url = `https://${host}:4433/channels/${channel}`;
+
+        connection = new WebTransportConnection();
+        await connection.connect(url, (error) => {
+          if (error) {
+            log(`CONNECTION: Connection failed due to ${error}.`);
+          } else {
+            log(`CONNECTION: Connection closed gracefully.`);
+          }
+          updateUI();
+        });
+        updateUI();
+
+        log('CONNECTION: Connected');
+
+        connection.read((data) => {
+          const view = new DataView(data.buffer);
+          stats.recv += 1;
+          const isAudioMessage = data.length > 20 && view.getUint8(8) == 0x0C;
+          const isBurstMessage = data.length > 20 && view.getUint8(8) == 0x0D;
+          if (isAudioMessage) {
+            // log('RECEIVED: audio ' + data.subarray(20).length);
+            if (writer) {
+              const decoded = decodeWithLyra(data.subarray(20), 48000, 4800);
+              // log(`DECODED: ${decoded.length} ${data.length - 20}`);
+              const timestamp = view.getUint32(12, false);
+              const audio = new AudioData({
+                format: 'f32-planar',
+                sampleRate: 48000,
+                numberOfFrames: decoded.length,
+                numberOfChannels: 1,
+                timestamp: timestamp * 1000,
+                data: decoded,
+              });
+              writer.write(audio);
+            }
+          } else if (isBurstMessage) {
+            // log(`RECEIVED: len=${data.length} sn=${view.getUint32(1)}`);
+            stats.lost += view.getUint32(4, false) - lastSeqNumber - 1;
+            lastSeqNumber = view.getUint32(4, false);
+            const now = Date.now();
+            const rtt = now % 10000000 - view.getUint32(12, false);
+            stats.rtt = stats.rtt * 0.9 + rtt * 0.1;
+          } else {
+            log('RECEIVED: msg=' + decoder.decode(data));
+          }
+        }).catch((error) => {
+          log(`CONNECTION: Receiver failed due to ${error}.`);
+        })
+      });
+  
+      document.getElementById('send-button').addEventListener('click', () => {
+        const message = document.getElementById('message').value;
+        const data = new Uint8Array(encoder.encode(message));
+        send(data, message);
+      });
+
+      document.getElementById('burst-button').addEventListener('click', async () => {
         log('SEND: 100 msgs/sec with 500 bytes each for 10 secs');
         const start = Date.now();
         let sent = 0;
@@ -190,7 +204,100 @@
           
           send(data);
         }, 10);
-      }
+      });
+
+      document.getElementById('audio-sending-button').addEventListener('click', async () => {
+        const button = document.getElementById('audio-sending-button');
+        if (stream) {
+          stream.getAudioTracks().forEach(t => t.stop());
+          stream = null;
+        }
+        
+        if (button.innerText === 'Start Audio Sending') {
+          button.innerText = 'Stop Audio Sending';
+
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+          const buffer = new Float32Array(480 * 10);  // 100ms
+          let bufferLength = 0;
+          const trackProcessor = new MediaStreamTrackProcessor({ track: stream.getAudioTracks()[0] });
+
+          let i = 0;
+          // Move to worker
+          const begin = Date.now();
+          const transformer = new TransformStream({
+            async transform(audioFrame, controller) {
+              if (!isLyraReady()) {
+                audioFrame.close();
+                return;
+              }
+              const newBuffer = new Float32Array(audioFrame.numberOfFrames);
+              audioFrame.copyTo(newBuffer, { planeIndex: 0, format: 'f32-planar' });
+              audioFrame.close();
+              buffer.set(newBuffer, bufferLength);
+              bufferLength += newBuffer.length;
+              
+              if (bufferLength >= buffer.length) {
+                const timestamp = Date.now() - begin;
+                const encoded = encodeWithLyra(buffer, 48000);
+                // log(`ENCODED: ${encoded.length} ${buffer.length}`);
+
+                controller.enqueue({ timestamp, encoded });
+                bufferLength = 0;
+              }
+            },
+          });
+          const reader = trackProcessor.readable.pipeThrough(transformer).pipeTo(new WritableStream({
+            write({ timestamp, encoded }) {
+              if (writer) {
+                // const decoded = decodeWithLyra(encoded, 48000, buffer.length);
+           
+                // const audio = new AudioData({
+                //   format: 'f32-planar',
+                //   sampleRate: 48000,
+                //   numberOfFrames: decoded.length,
+                //   numberOfChannels: 1,
+                //   timestamp: (Date.now() - begin) * 1000,
+                //   data: decoded
+                // });
+                // writer.write(audio);
+              }
+
+              const data = new Uint8Array(20 + encoded.length);
+              const view = new DataView(data.buffer);
+              view.setUint32(0, data.length, false);
+              view.setUint32(4, seqNumber++, false);
+              view.setUint8(8, 0x0C, false);
+              view.setUint8(9, 0x01, false);
+              view.setUint32(12, timestamp, false);
+              view.setUint32(16, trackID, false);
+              data.set(encoded, 20);
+              send(data);
+            }
+          }));
+        } else {
+          button.innerText = 'Start Audio Sending';
+        }
+      });
+
+      document.getElementById('audio-receiving-button').addEventListener('click', async () => {
+        const button = document.getElementById('audio-receiving-button');
+        if (button.innerText === 'Start Audio Receiving') {
+          button.innerText = 'Stop Audio Receiving';
+
+          const trackGenerator = new MediaStreamTrackGenerator({ kind: 'audio' });
+          writer = trackGenerator.writable.getWriter();
+
+          const audio = document.getElementById('audio-receiving');
+          audio.srcObject = new MediaStream([trackGenerator]);
+          audio.play();
+        } else {
+          button.innerText = 'Start Audio Receiving';
+          const audio = document.getElementById('audio-receiving');
+          audio.pause();
+          writer = null;
+        }
+      });
       
       const packetsSentSeries = new TimelineDataSeries();
       const packetsRecvSeries = new TimelineDataSeries();
