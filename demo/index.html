@@ -31,6 +31,10 @@
     <div>
       Host <input id="host" type="text" value="prismrouter.com"></input>
       Channel <input id="channel" type="text" value="default"></input>
+      <select id="transport">
+        <option value="webtransport">WebTransport</option>
+        <option value="websocket">WebSocket</option>
+      </select>
       <button id="connect-button">Connect</button>
     </div>
 
@@ -99,7 +103,7 @@
           stats.sent += 1;
           const view = new DataView(data.buffer);
           const isAudioMessage = data.length > 20 && view.getUint8(8) == 0x0C;
-          const isBurstMessage = data.length > 20 && view.getUint8(8) == 0x0D;
+          const isBurstMessage = data.length === 20 && view.getUint8(8) == 0x0D;
           if (!isAudioMessage && !isBurstMessage) {
             log('SENT: msg=' + message);
           }
@@ -126,9 +130,17 @@
 
         const channel = document.getElementById('channel').value || 'default';
         const host = document.getElementById('host').value || 'localhost';
-        const url = `https://${host}:4433/channels/${channel}`;
-
-        connection = new WebTransportConnection();
+        const transport = document.getElementById('transport').value || 'webtransport';
+        let url;
+        if (transport === 'webtransport') {
+          url = `https://${host}:4433/channels/${channel}`;
+          connection = new WebTransportConnection();
+        } else if (transport === 'websocket') {
+          url = `wss://${host}:4434/channels/${channel}`;
+          connection = new WebSocketConnection();
+        } else {
+          throw new Error('Unknown transport: ' + transport);
+        }
         await connection.connect(url, (error) => {
           if (error) {
             log(`CONNECTION: Connection failed due to ${error}.`);
@@ -145,7 +157,7 @@
           const view = new DataView(data.buffer);
           stats.recv += 1;
           const isAudioMessage = data.length > 20 && view.getUint8(8) == 0x0C;
-          const isBurstMessage = data.length > 20 && view.getUint8(8) == 0x0D;
+          const isBurstMessage = data.length === 20 && view.getUint8(8) == 0x0D;
           if (isAudioMessage) {
             // log('RECEIVED: audio ' + data.subarray(20).length);
             if (writer) {

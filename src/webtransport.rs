@@ -48,7 +48,6 @@ impl transport::Transport for WebTransport {
 
                         match handle_request(req, &mut stream).await {
                             Ok(channel_name) => {
-                                // let transport = WebTransport::new();
                                 let channel = self
                                     .server
                                     .lock()

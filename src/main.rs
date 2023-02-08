@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use futures_util::StreamExt;
 use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
 use tracing::*;
 
 use h3_quinn::quinn;
@@ -17,6 +18,7 @@ use h3_quinn::quinn;
 pub mod channel;
 pub mod server;
 pub mod transport;
+pub mod util;
 pub mod websocket;
 pub mod webtransport;
 use crate::transport::Transport;
@@ -32,9 +34,12 @@ struct Opt {
     /// TLS certificate in PEM format
     #[clap(short = 'c', long = "cert", requires = "key")]
     cert: PathBuf,
-    /// Address to listen on
-    #[clap(long = "listen", default_value = "[::1]:4433")]
-    listen: SocketAddr,
+    /// Address to listen on for quic
+    #[clap(long = "wt_listen", default_value = "[::]:4433")]
+    wt_listen: SocketAddr,
+    /// Address to listen on for quic
+    #[clap(long = "ws_listen", default_value = "[::]:4434")]
+    ws_listen: SocketAddr,
 }
 
 #[tokio::main]
@@ -79,24 +84,24 @@ async fn main() -> Result<()> {
             .collect()
     };
 
-    let mut tls_config = rustls::ServerConfig::builder()
+    let mut wt_tls = rustls::ServerConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
         .with_no_client_auth()
-        .with_single_cert(certs, key)?;
+        .with_single_cert(certs.clone(), key.clone())?;
 
-    tls_config.max_early_data_size = u32::MAX;
-    tls_config.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
-    tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
+    wt_tls.max_early_data_size = u32::MAX; // TODO
+    wt_tls.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
+    wt_tls.key_log = Arc::new(rustls::KeyLogFile::new());
 
-    let mut config = quinn::ServerConfig::with_crypto(Arc::new(tls_config));
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(wt_tls));
     let transport_config = Arc::get_mut(&mut config.transport).unwrap();
     transport_config.max_idle_timeout(Some(Duration::from_secs(600).try_into().unwrap()));
 
-    let (endpoint, mut incoming) = quinn::Endpoint::server(config, options.listen)?;
-    info!("listening on {}", endpoint.local_addr()?);
+    let (endpoint, mut incoming) = quinn::Endpoint::server(config, options.wt_listen)?;
+    info!("listening webtransport on {}", endpoint.local_addr()?);
 
     let server = Arc::new(Mutex::new(server::Server::new()));
 
@@ -113,15 +118,28 @@ async fn main() -> Result<()> {
         }
     });
 
-    let try_socket = TcpListener::bind("127.0.0.1:8080").await;
-    let listener = try_socket.expect("Failed to bind");
+    let mut ws_tls = rustls::ServerConfig::builder()
+        .with_safe_default_cipher_suites()
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(certs.clone(), key.clone())?;
+    ws_tls.max_early_data_size = u32::MAX; // TODO
+    ws_tls.key_log = Arc::new(rustls::KeyLogFile::new());
+
+    let acceptor = TlsAcceptor::from(Arc::new(ws_tls));
+    let listener = TcpListener::bind(options.ws_listen).await?;
+    info!("listening websocket on {}", listener.local_addr()?);
 
     while let Ok((stream, _)) = listener.accept().await {
         info!("incoming connection tcp");
 
         let server = server.clone();
+        let acceptor = acceptor.clone();
         tokio::spawn(async move {
-            let transport = websocket::WebSocket::new(server, stream);
+            let stream = acceptor.accept(stream).await;
+            let transport = websocket::WebSocket::new(server, stream.unwrap());
             let _ = transport.process().await;
         });
     }
