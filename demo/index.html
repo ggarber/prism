@@ -196,12 +196,12 @@
       });
 
       document.getElementById('burst-button').addEventListener('click', async () => {
-        log('SEND: 100 msgs/sec with 500 bytes each for 10 secs');
+        log('SEND: 100 msgs/sec with 500 bytes each for 30 secs');
         const start = Date.now();
         let sent = 0;
         const interval = setInterval(() => {
           const now = Date.now();
-          if (++sent > 1000) {
+          if (++sent > 30*100) {
             return clearInterval(interval);
           }
           // Use RUSH-like packet format
@@ -313,6 +313,7 @@
       
       const packetsSentSeries = new TimelineDataSeries();
       const packetsRecvSeries = new TimelineDataSeries();
+      packetsRecvSeries.setColor('blue');
       const packetsView = new TimelineGraphView('packetsGraph', 'packetsCanvas');
       packetsView.updateEndDate();
 
@@ -326,6 +327,7 @@
         rttSeries.addPoint(now, stats.rtt);
         rttView.setDataSeries([ rttSeries ]);
         rttView.updateEndDate();
+        stats.rtt = 0;
       }, 1000);
 
       const rttSeries = new TimelineDataSeries();

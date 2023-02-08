@@ -182,7 +182,7 @@ const TimelineGraphView = (function() {
     this.graph_ = null;
 
     // Horizontal scale factor, in terms of milliseconds per pixel.
-    this.scale_ = 1000;
+    this.scale_ = 500;
 
     // Initialize the scrollbar.
     this.updateScrollbarRange_(true);

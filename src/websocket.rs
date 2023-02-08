@@ -12,7 +12,6 @@ use http::Uri;
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 use tokio_tungstenite::tungstenite::handshake::server::Request;
-use tokio_tungstenite::tungstenite::Error;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::*;
 
