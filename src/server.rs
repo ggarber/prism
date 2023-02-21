@@ -3,16 +3,21 @@ use tokio::sync::Mutex;
 use tracing::*;
 
 use crate::channel;
+use crate::module;
 
 #[derive(Debug)]
 pub struct Server {
     channels: HashMap<String, Arc<Mutex<channel::Channel>>>,
+    pub modules: HashMap<String, Arc<Mutex<module::Module>>>,
 }
+
+pub type ServerPtr = Arc<std::sync::Mutex<Server>>;
 
 impl Server {
     pub fn new() -> Self {
         Self {
             channels: HashMap::new(),
+            modules: HashMap::new(),
         }
     }
 

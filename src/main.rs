@@ -16,11 +16,14 @@ use tracing::*;
 use h3_quinn::quinn;
 
 pub mod channel;
+pub mod module;
 pub mod server;
 pub mod transport;
 pub mod util;
+pub mod webrtc;
 pub mod websocket;
 pub mod webtransport;
+pub mod whip;
 use crate::transport::Transport;
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"h3", b"rush"];
@@ -104,6 +107,12 @@ async fn main() -> Result<()> {
     info!("listening webtransport on {}", endpoint.local_addr()?);
 
     let server = Arc::new(Mutex::new(server::Server::new()));
+
+    let webrtc = webrtc::WebRtcModule::new(server.clone());
+    webrtc.start().await?;
+
+    let whip = whip::WhipModule::new(server.clone());
+    whip.start().await?;
 
     let clone = server.clone();
     tokio::spawn(async move {
