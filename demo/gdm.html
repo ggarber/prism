@@ -1,0 +1,65 @@
+<button onclick="start()">Start</button>
+
+<video id="localVideo" autoplay></video>
+<video id="remoteVideo" autoplay></video>
+<script>
+    function start() {
+        // Get video stream
+        navigator.mediaDevices.getDisplayMedia({ video: true }).then(stream => {
+            const trackProcessor = new MediaStreamTrackProcessor({ track: stream.getVideoTracks()[0] });
+            const trackGenerator = new MediaStreamTrackGenerator({ kind: "video" });
+
+            const transformer = new TransformStream({
+                async transform(videoFrame, controller) {
+                controller.enqueue(videoFrame);
+                },
+            });
+
+            trackProcessor.readable.pipeThrough(transformer).pipeTo(trackGenerator.writable);
+            stream = new MediaStream([trackGenerator]);
+            // Display local video
+            const localVideo = document.getElementById("localVideo");
+            localVideo.srcObject = stream; 
+
+            // Create peer connections
+            const peer1 = new RTCPeerConnection();
+            const peer2 = new RTCPeerConnection();
+
+            peer1.addTrack(stream.getVideoTracks()[0], stream);
+            
+            // Handle remote video
+            peer2.ontrack = event => {
+                const remoteVideo = document.getElementById("remoteVideo");
+                remoteVideo.srcObject = event.streams[0];
+            };
+
+            peer2.onicecandidate = event => {
+                if (event.candidate) {
+                    peer1.addIceCandidate(event.candidate);
+                }
+            };
+            peer1.onicecandidate = event => {
+                if (event.candidate) {
+                    peer2.addIceCandidate(event.candidate);
+                }
+            };
+
+            // Create offer for peer1
+            peer1.createOffer().then(offer => {
+                peer1.setLocalDescription(offer);
+
+                // Send offer to peer2
+                peer2.setRemoteDescription(offer);
+
+                // Create answer for peer2
+                peer2.createAnswer().then(answer => {
+                    peer2.setLocalDescription(answer);
+
+                    // Send answer to peer1
+                    peer1.setRemoteDescription(answer);
+                });
+            });
+        });
+    }
+</script>
+

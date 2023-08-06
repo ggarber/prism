@@ -6,6 +6,13 @@ The implementation makes use on quinn/h3 rust libraries but with some custom pat
 
 Check deployed demo to http://prismrouter.com
 
+## Concepts and Terminology
+
+* Session
+* Channel: (metadata and data channels)
+* Subscriptions
+
+
 ## Running locally
 
 ```

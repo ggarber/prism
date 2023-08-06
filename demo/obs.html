@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="x-ua-compatible" content="ie=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:,">
+
+    <title></title>
+    <style>
+      p {
+        margin: 0px;
+      }
+      div {
+        margin: 0.5em;
+      }
+      div.graph-container {
+        float: left;
+        width: 400px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>RUSH over WebTransport demo</h1>
+    <pre>
+      Demo using WebTransport streams to send and receive video frames.
+      Click "Connect" and then "Start Video Sending" in one browser and "Start Video Receiving" in another to transmit encoded unidirectional video in real time.
+    </pre>
+
+    <div>
+      Host <input id="host" type="text" value="prismrouter.com"></input>
+      Channel <input id="channel" type="text" value="default"></input>
+      <button id="connect-button">Connect</button>
+    </div>
+
+    <div>
+      <button id="video-sending-button">Start Video Sending</button>
+      <button id="video-receiving-button">Start Video Receiving</button>
+      <video id="video-receiving"></video>
+    </div>
+
+    <div>
+      <div class="graph-container" id="rtt-graph">
+        <div>RTT</div>
+        <canvas id="rttCanvas"></canvas>
+      </div>
+      <div class="graph-container" id="packets-graph">
+        <div>Packets</div>
+        <canvas id="packetsCanvas"></canvas>
+      </div>
+    </div>
+    
+    <div id="output">
+    </div>
+
+    <footer style="position: absolute; bottom: 10px;">
+    </footer>
+  
+    <script src="./util.js"></script>
+    <script src="./graph.js"></script>
+    <script src="./webtransport.js"></script>
+    <script src="./websocket.js"></script>
+    <script src="./media.js"></script>
+    <script src="./rush.js"></script>
+    <script type="module">
+      let connection = null;
+      let stream = null;
+      let writer = null;
+
+      const trackID = Math.floor(Math.random() * 1000000);
+      let seqNumber = 0;
+      let lastSeqNumber = 0;
+      const stats = {
+        sent: 0,
+        recv: 0,
+        lost: 0,
+        rtt: 0,
+      }
+
+      if (!window.VideoEncoder) {
+        log('VideoEncoder is not supported in this browser!!!');
+      }
+
+      const videoEncoder = new VideoEncoder({
+        output: () => {},
+        error: () => {},
+      });
+
+      const url = new URL(window.location.href);
+      const channel = url.searchParams.get('channel');
+      document.getElementById('channel').value = channel || 'default';
+      const host = url.searchParams.get('host');
+      document.getElementById('host').value = host || 'prismrouter.com';
+
+      function updateUI() {
+        const connected = connection && connection.connected;
+        document.getElementById('video-sending-button').disabled = !connected;
+        document.getElementById('video-receiving-button').disabled = !connected;
+      }
+      updateUI();
+
+      document.getElementById('connect-button').addEventListener('click', async () => {
+        if (connection) {
+          connection.close();
+          connection = null;
+        }
+        log('CONNECTION: Connecting');
+
+        const channel = document.getElementById('channel').value || 'default';
+        const host = document.getElementById('host').value || 'localhost';
+        connection = new RushConnection();
+        const url = `https://${host}:3446/channels/${channel}`;
+        await connection.connect(url, (error) => {
+          if (error) {
+            log(`CONNECTION: Connection failed due to ${error}.`);
+          } else {
+            log(`CONNECTION: Connection closed gracefully.`);
+          }
+          updateUI();
+        });
+        updateUI();
+
+        log('CONNECTION: Connected');
+
+        connection.read((data) => {
+          const view = new DataView(data.buffer);
+          stats.recv += 1;
+          
+        }).catch((error) => {
+          log(`CONNECTION: Receiver failed due to ${error}.`);
+        })
+      });
+  
+      document.getElementById('video-sending-button').addEventListener('click', async () => {
+        const button = document.getElementById('video-sending-button');
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+          stream = null;
+        }
+        
+        if (button.innerText === 'Start Video Sending') {
+          button.innerText = 'Stop Video Sending';
+
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+
+          const buffer = new Float32Array(480 * 10);  // 100ms
+          let bufferLength = 0;
+          const trackProcessor = new MediaStreamTrackProcessor({ track: stream.getVideoTracks()[0] });
+
+          let i = 0;
+          // Move to worker
+          const begin = Date.now();
+          const transformer = new TransformStream({
+            async transform(audioFrame, controller) {
+              if (!isLyraReady()) {
+                audioFrame.close();
+                return;
+              }
+              const newBuffer = new Float32Array(audioFrame.numberOfFrames);
+              audioFrame.copyTo(newBuffer, { planeIndex: 0, format: 'f32-planar' });
+              audioFrame.close();
+              buffer.set(newBuffer, bufferLength);
+              bufferLength += newBuffer.length;
+              
+              if (bufferLength >= buffer.length) {
+                const timestamp = Date.now() - begin;
+                const encoded = encodeWithLyra(buffer, 48000);
+                // log(`ENCODED: ${encoded.length} ${buffer.length}`);
+
+                controller.enqueue({ timestamp, encoded });
+                bufferLength = 0;
+              }
+            },
+          });
+          const reader = trackProcessor.readable.pipeThrough(transformer).pipeTo(new WritableStream({
+            write({ timestamp, encoded }) {
+              if (writer) {
+                // const decoded = decodeWithLyra(encoded, 48000, buffer.length);
+           
+                // const audio = new AudioData({
+                //   format: 'f32-planar',
+                //   sampleRate: 48000,
+                //   numberOfFrames: decoded.length,
+                //   numberOfChannels: 1,
+                //   timestamp: (Date.now() - begin) * 1000,
+                //   data: decoded
+                // });
+                // writer.write(audio);
+              }
+
+              const data = new Uint8Array(20 + encoded.length);
+              const view = new DataView(data.buffer);
+              view.setUint32(0, data.length, false);
+              view.setUint32(4, seqNumber++, false);
+              view.setUint8(8, 0x0C, false);
+              view.setUint8(9, 0x01, false);
+              view.setUint32(12, timestamp, false);
+              view.setUint32(16, trackID, false);
+              data.set(encoded, 20);
+              send(data);
+            }
+          }));
+        } else {
+          button.innerText = 'Start Video Sending';
+        }
+      });
+
+      document.getElementById('video-receiving-button').addEventListener('click', async () => {
+        const button = document.getElementById('video-receiving-button');
+        if (button.innerText === 'Start Video Receiving') {
+          button.innerText = 'Stop Video Receiving';
+
+          const trackGenerator = new MediaStreamTrackGenerator({ kind: 'video' });
+          writer = trackGenerator.writable.getWriter();
+
+          const audio = document.getElementById('video-receiving');
+          audio.srcObject = new MediaStream([trackGenerator]);
+          audio.play();
+        } else {
+          button.innerText = 'Start Video Receiving';
+          const audio = document.getElementById('video-receiving');
+          audio.pause();
+          writer = null;
+        }
+      });
+      
+      const packetsSentSeries = new TimelineDataSeries();
+      const packetsRecvSeries = new TimelineDataSeries();
+      packetsRecvSeries.setColor('blue');
+      const packetsView = new TimelineGraphView('packetsGraph', 'packetsCanvas');
+      packetsView.updateEndDate();
+
+      setInterval(() => {
+        const now = Date.now();
+        packetsSentSeries.addPoint(now, stats.sent);
+        packetsRecvSeries.addPoint(now, stats.recv);
+        packetsView.setDataSeries([ packetsSentSeries, packetsRecvSeries ]);
+        packetsView.updateEndDate();
+
+        rttSeries.addPoint(now, stats.rtt);
+        rttView.setDataSeries([ rttSeries ]);
+        rttView.updateEndDate();
+        stats.rtt = 0;
+      }, 1000);
+
+      const rttSeries = new TimelineDataSeries();
+      const rttView = new TimelineGraphView('rttGraph', 'rttCanvas');
+      rttView.updateEndDate();
+    </script>
+  </body>
+</html>

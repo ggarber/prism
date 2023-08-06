@@ -8,7 +8,7 @@ use crate::module;
 #[derive(Debug)]
 pub struct Server {
     channels: HashMap<String, Arc<Mutex<channel::Channel>>>,
-    pub modules: HashMap<String, Arc<Mutex<module::Module>>>,
+    pub modules: HashMap<String, Box<Arc<Mutex<module::Module>>>>,
 }
 
 pub type ServerPtr = Arc<std::sync::Mutex<Server>>;

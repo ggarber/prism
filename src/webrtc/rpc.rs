@@ -1,11 +1,11 @@
+#[derive(Debug, Clone)]
+pub enum Message {
+    CreateTransport(CreateTransportRequest),
+    DestroyTransport(DestroyTransportRequest),
+}
+
+#[derive(Debug, Clone)]
 pub struct CreateTransportRequest {}
 
-pub struct CreateConnectionResponse {}
-
-pub struct DestroyConnectionRequest {}
-
-pub struct DestroyConnectionResponse {}
-
-pub fn parse_message() -> Result<(), anyhow::Error> {
-    Ok(())
-}
+#[derive(Debug, Clone)]
+pub struct DestroyTransportRequest {}

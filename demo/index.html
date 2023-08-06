@@ -34,6 +34,7 @@
       <select id="transport">
         <option value="webtransport">WebTransport</option>
         <option value="websocket">WebSocket</option>
+        <option value="rush">RUSH over WebTransport</option>
       </select>
       <button id="connect-button">Connect</button>
     </div>
@@ -43,11 +44,16 @@
       <button id="send-button">Send</button>
 
       <button id="burst-button">Burst</button>
-
+    </div>
+    <div>
       <button id="audio-sending-button">Start Audio Sending</button>
       <button id="audio-receiving-button">Start Audio Receiving</button>
       <audio id="audio-receiving"></audio>
+
+      <button id="video-sending-button">Start Video Sending</button>
+      <button id="video-receiving-button">Start Video Receiving</button>
     </div>
+    <canvas id="video-receiving"></canvas>
 
     <div>
       <div class="graph-container" id="rtt-graph">
@@ -71,6 +77,7 @@
     <script src="./graph.js"></script>
     <script src="./webtransport.js"></script>
     <script src="./websocket.js"></script>
+    <script src="./rush.js"></script>
     <script src="./media.js"></script>
     <script type="module">
       import { isLyraReady, encodeWithLyra, decodeWithLyra } from "https://unpkg.com/lyra-codec/dist/lyra_bundle.js";
@@ -80,6 +87,22 @@
       let connection = null;
       let stream = null;
       let writer = null;
+
+      const videoDecoder = new VideoDecoder({
+        output: frame => {
+          videoRenderer.render(frame);
+        },
+        error: (e) => {
+          console.log(e.message);
+        },
+      });
+      const codecConfig = {
+        codec: "avc1.42002A",
+        codedWidth: 640,
+        codedHeight: 480,
+      };
+      videoDecoder.configure(codecConfig);
+      const videoRenderer = new VideoRenderer(document.getElementById('video-receiving'));
 
       const trackID = Math.floor(Math.random() * 1000000);
       let seqNumber = 0;
@@ -103,8 +126,10 @@
           stats.sent += 1;
           const view = new DataView(data.buffer);
           const isAudioMessage = data.length > 20 && view.getUint8(8) == 0x0C;
-          const isBurstMessage = data.length === 20 && view.getUint8(8) == 0x0D;
-          if (!isAudioMessage && !isBurstMessage) {
+          const isVideoMessage = data.length > 20 && view.getUint8(16) == 0x0D;
+          const isBurstMessage = data.length == 20 && view.getUint8(8) == 0x0D;
+          console.log(data.length)
+          if (!isAudioMessage && !isVideoMessage && !isBurstMessage) {
             log('SENT: msg=' + message);
           }
         } catch (error) {
@@ -118,6 +143,9 @@
         document.getElementById('burst-button').disabled = !connected;
         document.getElementById('audio-sending-button').disabled = !connected;
         document.getElementById('audio-receiving-button').disabled = !connected;
+        // document.getElementById('video-sending-button').disabled = !connected;
+        // document.getElementById('video-receiving-button').disabled = !connected;
+        document.getElementById('connect-button').disabled = connected;
       }
       updateUI();
 
@@ -138,6 +166,9 @@
         } else if (transport === 'websocket') {
           url = `wss://${host}:4434/channels/${channel}`;
           connection = new WebSocketConnection();
+        } else if (transport === 'rush') {
+          url = `https://${host}:3446/channels/${channel}`;
+          connection = new RushConnection();
         } else {
           throw new Error('Unknown transport: ' + transport);
         }
@@ -157,7 +188,8 @@
           const view = new DataView(data.buffer);
           stats.recv += 1;
           const isAudioMessage = data.length > 20 && view.getUint8(8) == 0x0C;
-          const isBurstMessage = data.length === 20 && view.getUint8(8) == 0x0D;
+          const isVideoMessage = data.length > 20 && view.getUint8(16) == 0x0D;
+          const isBurstMessage = data.length == 20 && view.getUint8(8) == 0x0D;
           if (isAudioMessage) {
             // log('RECEIVED: audio ' + data.subarray(20).length);
             if (writer) {
@@ -181,6 +213,19 @@
             const now = Date.now();
             const rtt = now % 10000000 - view.getUint32(12, false);
             stats.rtt = stats.rtt * 0.9 + rtt * 0.1;
+          } else if (isVideoMessage) {
+            console.log('isVideo');
+            if (videoDecoder) {
+              const timestamp = view.getUint32(12, false);
+              const seqnum = view.getUint32(4, false);
+              const chunk = new EncodedVideoChunk({
+                timestamp: timestamp * 1000,
+                type: seqnum === 0 ? "key" : "delta",
+                data: new Uint8Array(data.subarray(20)),
+              });
+              console.log('decode', seqnum, chunk);
+              videoDecoder.decode(chunk);
+            }
           } else {
             log('RECEIVED: msg=' + decoder.decode(data));
           }
@@ -221,7 +266,7 @@
       document.getElementById('audio-sending-button').addEventListener('click', async () => {
         const button = document.getElementById('audio-sending-button');
         if (stream) {
-          stream.getAudioTracks().forEach(t => t.stop());
+          stream.getTracks().forEach(t => t.stop());
           stream = null;
         }
         
@@ -308,6 +353,90 @@
           const audio = document.getElementById('audio-receiving');
           audio.pause();
           writer = null;
+        }
+      });
+
+      document.getElementById('video-sending-button').addEventListener('click', async () => {
+        const button = document.getElementById('video-sending-button');
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+          stream = null;
+        }
+        
+        if (button.innerText === 'Start Video Sending') {
+          button.innerText = 'Stop Video Sending';
+
+          stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+
+          const buffer = new Float32Array(480 * 10);  // 100ms
+          let bufferLength = 0;
+          const trackProcessor = new MediaStreamTrackProcessor({ track: stream.getVideoTracks()[0] });
+
+          const config = {
+            codec: "avc1.42002A",
+            width: 640,
+            height: 480,
+            bitrate: 2_000_000, // 2 Mbps
+            framerate: 30,
+          };
+          const { supported } = await VideoEncoder.isConfigSupported(config);
+          const encoder = new VideoEncoder({
+            output: (chunk, metadata) => {
+              if (metadata.decoderConfig) {
+              }
+              if (seqNumber > 2) return;
+              const timestamp = 0;
+              const data = new Uint8Array(27 + chunk.byteLength);
+              const view = new DataView(data.buffer);
+              view.setUint32(0, 0, false);
+              view.setUint32(0+4, data.length, false);
+              view.setUint32(8, 0, false);
+              view.setUint32(8+4, seqNumber++, false);
+              view.setUint8(16, 0x0D, false);
+              view.setUint8(17, 0x01, false);
+              view.setUint32(18, 0, false);
+              view.setUint32(18+4, timestamp, false);
+              view.setUint8(26, trackID, false);
+              data.set(chunk, 27);
+              send(data);
+            },
+            error: console.error,
+          });
+          encoder.configure(config);
+          let frameCounter = 0;
+
+          let i = 0;
+          // Move to worker
+          const begin = Date.now();
+          const transformer = new TransformStream({
+            async transform(videoFrame, controller) {
+              if (encoder.encodeQueueSize > 2) {
+                // Too many frames in flight, encoder is overwhelmed
+                // let's drop this frame.
+                videoFrame.close();
+              } else {
+                const keyFrame = seqNumber % 150 == 0;
+                encoder.encode(videoFrame, { keyFrame });
+                videoFrame.close();
+              }
+            },
+          });
+          const reader = trackProcessor.readable.pipeThrough(transformer).pipeTo(new WritableStream({
+            write({ timestamp, encoded }) {
+              // console.log('send');
+            }
+          }));
+        } else {
+          button.innerText = 'Start Video Sending';
+        }
+      });
+
+      document.getElementById('video-receiving-button').addEventListener('click', async () => {
+        const button = document.getElementById('video-receiving-button');
+        if (button.innerText === 'Start Video Receiving') {
+          button.innerText = 'Stop Video Receiving'; 
+        } else {
+          button.innerText = 'Start Video Receiving';
         }
       });
       

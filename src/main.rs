@@ -24,9 +24,10 @@ pub mod webrtc;
 pub mod websocket;
 pub mod webtransport;
 pub mod whip;
+pub mod rush;
 use crate::transport::Transport;
 
-const ALPN_QUIC_HTTP: &[&[u8]] = &[b"h3", b"rush"];
+const ALPN_QUIC_HTTP: &[&[u8]] = &[b"h3"];
 
 #[derive(Parser, Debug)]
 #[clap(name = "prism")]
@@ -108,11 +109,14 @@ async fn main() -> Result<()> {
 
     let server = Arc::new(Mutex::new(server::Server::new()));
 
-    let webrtc = webrtc::WebRtcModule::new(server.clone());
-    webrtc.start().await?;
+    // let webrtc = webrtc::WebRtcModule::new(server.clone());
+    // webrtc.start().await?;
 
-    let whip = whip::WhipModule::new(server.clone());
-    whip.start().await?;
+    // let whip = whip::WhipModule::new(server.clone());
+    // whip.start().await?;
+
+    let rush = rush::RushModule::new(server.clone());
+    rush.start().await?;
 
     let clone = server.clone();
     tokio::spawn(async move {

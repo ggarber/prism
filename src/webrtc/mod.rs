@@ -44,42 +44,43 @@ impl WebRtcModule {
             .lock()
             .unwrap()
             .modules
-            .insert(self.name, Arc::new(Mutex::new(module)));
+            .insert(self.name, Box::new(Arc::new(Mutex::new(module))));
 
         tokio::spawn(async move {
+            let udp_network = udp_network.clone();
             while let Ok(msg) = commands.recv().await {
                 info!("webrtc command: {:#?}", msg);
-                msg.reply.send(msg.data).unwrap();
+
+                let udp_network = udp_network.clone();
+                // when ready to create a connection, create an agent
+                let ice_agent = Arc::new(
+                    Agent::new(AgentConfig {
+                        network_types: vec![NetworkType::Udp4, NetworkType::Udp6],
+                        udp_network,
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap(),
+                );
+                let _ = ice_agent.gather_candidates();
+
+                // Get the local auth details and send to remote peer
+                let (local_ufrag, local_pwd) = ice_agent.get_local_user_credentials().await;
+
+                msg.reply.send(format!("{}/{}", local_ufrag, local_pwd)).unwrap();
+
+                tokio::spawn(async move {
+                    ice_agent.on_connection_state_change(Box::new(move |c: ConnectionState| {
+                        info!("incoming connection ice");
+                        if c == ConnectionState::Failed {
+                            // let _ = ice_done_tx.try_send(());
+                        }
+                        Box::pin(async move {})
+                    }));
+                });
             }
         });
 
-        // CreateIceConnection, Input, Output
-        // DestroyIceConnection
-
-        // when ready to create a connection, create an agent
-        let ice_agent = Arc::new(
-            Agent::new(AgentConfig {
-                network_types: vec![NetworkType::Udp4, NetworkType::Udp6],
-                udp_network,
-                ..Default::default()
-            })
-            .await
-            .unwrap(),
-        );
-        let _ = ice_agent.gather_candidates();
-
-        // Get the local auth details and send to remote peer
-        let (local_ufrag, local_pwd) = ice_agent.get_local_user_credentials().await;
-
-        tokio::spawn(async move {
-            ice_agent.on_connection_state_change(Box::new(move |c: ConnectionState| {
-                info!("incoming connection ice");
-                if c == ConnectionState::Failed {
-                    // let _ = ice_done_tx.try_send(());
-                }
-                Box::pin(async move {})
-            }));
-        });
         Ok(())
     }
 

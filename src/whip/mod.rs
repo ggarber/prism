@@ -3,15 +3,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use tokio::sync::broadcast::{self, Sender};
+use tokio::sync::broadcast::{self};
 
-use http::{Request, Response};
+use http::{Response};
 use hyper::{server::Server, Body, Error};
-use tower::{make::Shared, ServiceBuilder};
 
 use tracing::*;
 
-use crate::module::Message;
 use crate::{module, server};
 
 pub struct WhipModule {
@@ -53,24 +51,25 @@ impl WhipModule {
                             return Ok::<_, Error>(Response::new(Body::from("Hello World")));
                         }
 
-                        let (reply, _) = broadcast::channel::<Vec<u8>>(1);
+                        let (reply, _) = broadcast::channel::<String>(1);
                         let _ = state.lock().await.send(module::Message {
-                            data: [].to_vec(),
+                            data: "Hi".to_string(),
                             reply: reply.clone(),
                         });
                         let res = reply.subscribe().recv().await.unwrap();
-                        Ok::<_, Error>(Response::new(Body::from("Hello World")))
+                        Ok::<_, Error>(Response::new(Body::from(res)))
                     }
                 }))
             }
         });
 
         let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
-        Server::bind(&addr)
-            .serve(service)
-            .await
-            .expect("server error");
+        let server = Server::bind(&addr)
+            .serve(service);
 
+        tokio::spawn(async move {
+            server.await.expect("server error");
+        });
         Ok(())
     }
 

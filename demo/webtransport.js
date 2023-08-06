@@ -18,6 +18,7 @@ class WebTransportConnection {
       this.writer = null;
     });
 
+    console.log(this.transport.datagrams.maxDatagramSize)
     await this.transport.ready;
 
     this.writer = this.transport.datagrams.writable.getWriter();
